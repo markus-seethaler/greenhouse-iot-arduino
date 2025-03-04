@@ -1,16 +1,15 @@
 #include <Arduino.h>
 #include <WiFiS3.h>
 #include <DHT.h>
-#include <ArduinoJson.h>
+#include <FirebaseClient.h>
+#include <NTPClient.h>
+
+// Include secrets from separate file that won't be committed to git
+#include "firebase_secret.h"
 
 // WiFi credentials
 const char* ssid = "Kindle";
 const char* password = "Helbing4Lyfe";
-
-// Google Cloud Function endpoint
-const char* serverAddress = "us-central1-iot-greenhouse-16852.cloudfunctions.net";
-const String path = "/recordSensorData";
-const char* deviceId = "garden_monitor_1";
 
 // Define pin and sensor type
 #define DHTPIN 2
@@ -31,7 +30,7 @@ const int waterValue = 206;
 // Variables for timing
 unsigned long previousMillis = 0;
 const long sensorInterval = 2000;
-const long uploadInterval = 60000;
+const long uploadInterval = 30000;
 unsigned long lastUploadTime = 0;
 
 // Store the latest sensor readings
@@ -40,12 +39,30 @@ float latestTemperature = 0;
 int latestSoilMoisture = 0;
 
 // Initialize the WiFi client
-WiFiSSLClient client;
+WiFiSSLClient ssl_client;
 
-// Function prototypes
-void connectToWiFi();
+const long utcOffsetWinter = 3600; // Offset from UTC in seconds (3600 seconds = 1h) -- UTC+1 (Central European Winter Time)
+const long utcOffsetSummer = 7200; // Offset from UTC in seconds (7200 seconds = 2h) -- UTC+2 (Central European Summer Time)
+unsigned long lastupdate = 0UL;
+ 
+// Define NTP Client to get time
+WiFiUDP udpSocket;
+NTPClient ntpClient(udpSocket, "pool.ntp.org", utcOffsetWinter);
+
+// Setup for Firebase
+UserAuth user_auth(API_KEY, USER_EMAIL, USER_PASSWORD, 3000 /* expire period in seconds (<3600) */);
+FirebaseApp app;
+
+// Create an AsyncClient for Firebase interactions
+using AsyncClient = AsyncClientClass;
+AsyncClient aClient(ssl_client);
+
+// Create a Firestore Documents instance
+Firestore::Documents Docs;
+
+void processData(AsyncResult &aResult);
 void readSensors();
-void uploadData();
+void uploadToFirestore();
 
 void setup() {
   Serial.begin(9600);
@@ -54,22 +71,39 @@ void setup() {
     ; // Wait for serial port to connect
   }
   
-  Serial.println("DHT22 and Soil Moisture Sensor with WiFi");
+  Serial.println("DHT22 and Soil Moisture Sensor with Firestore");
   Serial.println("-----------------------------------------");
   
   dht.begin();
   pinMode(SOIL_PIN, INPUT);
-  connectToWiFi();
+  
+  WiFi.begin(ssid, password);
+  
+  Serial.print("Connecting to Wi-Fi");
+  while (WiFi.status() != WL_CONNECTED) {
+    Serial.print(".");
+    delay(300);
+  }
+  Serial.println();
+  Serial.print("Connected with IP: ");
+  Serial.println(WiFi.localIP());
+  Serial.println();
+  ntpClient.begin();
+  
+  // Note: WiFiSSLClient doesn't need setInsecure() like other SSL clients
+  
+  Serial.println("Initializing Firebase app...");
+  initializeApp(aClient, app, getAuth(user_auth), processData, "🔐 authTask");
+  
+  app.getApp<Firestore::Documents>(Docs);
   
   Serial.println("Sensors initialized. Starting readings...");
   Serial.println();
 }
 
 void loop() {
-  if (WiFi.status() != WL_CONNECTED) {
-    connectToWiFi();
-  }
-  
+  // To maintain the authentication and async tasks
+  app.loop();
   unsigned long currentMillis = millis();
   
   if (currentMillis - previousMillis >= sensorInterval) {
@@ -77,33 +111,14 @@ void loop() {
     readSensors();
   }
   
-  if (currentMillis - lastUploadTime >= uploadInterval) {
-    uploadData();
+  if (app.ready() && (currentMillis - lastUploadTime >= uploadInterval)) {
+    uploadToFirestore();
     lastUploadTime = currentMillis;
-  }
-}
-
-void connectToWiFi() {
-  Serial.print("Attempting to connect to SSID: ");
-  Serial.println(ssid);
-  
-  WiFi.begin(ssid, password);
-  
-  // Wait up to 10 seconds for connection with timeout
-  unsigned long startTime = millis();
-  while (WiFi.status() != WL_CONNECTED && millis() - startTime < 10000) {
-    delay(500);
-    Serial.print(".");
-  }
-  
-  if (WiFi.status() == WL_CONNECTED) {
-    Serial.println("");
-    Serial.println("WiFi connected");
-    Serial.print("IP address: ");
-    Serial.println(WiFi.localIP());
-  } else {
-    Serial.println("");
-    Serial.println("WiFi connection failed! Will retry later.");
+    Serial.print(ntpClient.getHours());
+    Serial.print(":");
+    Serial.print(ntpClient.getMinutes());
+    Serial.print(":");
+    Serial.println(ntpClient.getSeconds());
   }
 }
 
@@ -143,126 +158,97 @@ void readSensors() {
   }
 }
 
-void uploadData() {
+void uploadToFirestore() {
   // Check if we have valid sensor readings
   if (isnan(latestHumidity) || isnan(latestTemperature)) {
     Serial.println("Invalid sensor readings, skipping upload");
     return;
   }
   
-  Serial.println("Preparing to upload data to cloud...");
+  Serial.println("Preparing to upload data to Firestore...");
   
-  // Create JSON document
-  StaticJsonDocument<256> jsonDoc;
+  // Define the document path
+  String documentPath = "devices/growbox/readings";
   
-  // Populate the JSON document to match exactly what the Cloud Function expects
-  jsonDoc["deviceId"] = deviceId;
+  // Create document
+  Document<Values::Value> doc;
   
-  // Create sensors object
-  JsonObject sensors = jsonDoc.createNestedObject("sensors");
+  // Add timestamp
+  unsigned long timestamp = millis() / 1000;
+  doc.add("timestamp", Values::Value(Values::IntegerValue(timestamp)));
   
-  // Create air object with all required fields
-  JsonObject air = sensors.createNestedObject("air");
-  air["temperature"] = latestTemperature;
-  air["humidity"] = latestHumidity;
-  air["unit"] = "C";
+  // STEP 1: Create the air section with humidity and temperature
+  Values::MapValue airMap;
   
-  // Create soil object with all required fields
-  JsonObject soil = sensors.createNestedObject("soil");
-  soil["moisture"] = latestSoilMoisture;
-  soil["unit"] = "%";
+  // Humidity object with unit and value
+  Values::MapValue humidityMap;
+  humidityMap.add("unit", Values::Value(Values::StringValue("Percent")));
+  humidityMap.add("value", Values::Value(Values::DoubleValue(latestHumidity)));
+  airMap.add("humidity", Values::Value(humidityMap));
   
-  // Serialize JSON to string
-  String jsonString;
-  serializeJson(jsonDoc, jsonString);
+  // Temperature object with unit and value
+  Values::MapValue temperatureMap;
+  temperatureMap.add("unit", Values::Value(Values::StringValue("Celsius")));
+  temperatureMap.add("value", Values::Value(Values::DoubleValue(latestTemperature)));
+  airMap.add("temperature", Values::Value(temperatureMap));
   
-  // Print JSON for debugging
-  Serial.print("Sending: ");
-  Serial.println(jsonString);
+  // STEP 2: Create the soil section with moisture
+  Values::MapValue soilMap;
   
-  // Make direct HTTPS request
-  Serial.println("Making direct HTTPS request...");
+  // Moisture object with unit and value
+  Values::MapValue moistureMap;
+  moistureMap.add("unit", Values::Value(Values::StringValue("%")));
+  moistureMap.add("value", Values::Value(Values::DoubleValue(latestSoilMoisture)));
+  soilMap.add("moisture", Values::Value(moistureMap));
   
-  // Connect with timeout
-  unsigned long connectStart = millis();
-  Serial.print("Connecting to server...");
+  // STEP 3: Create the sensors map containing air and soil
+  Values::MapValue sensorsMap;
+  sensorsMap.add("air", Values::Value(airMap));
+  sensorsMap.add("soil", Values::Value(soilMap));
   
-  bool connected = false;
-  while (!connected && millis() - connectStart < 5000) {
-    if (client.connect(serverAddress, 443)) {
-      connected = true;
-    }
-    delay(100);
-    Serial.print(".");
+  // Add the sensors map to the document
+  doc.add("sensors", Values::Value(sensorsMap));
+  
+  Serial.println("Complete document prepared. Uploading...");
+  
+  // Upload to Firestore
+  Docs.createDocument(aClient, Firestore::Parent(FIREBASE_PROJECT_ID), documentPath, DocumentMask(), doc, processData, "createDocumentTask");
+}
+
+void processData(AsyncResult &aResult) {
+  // Handle Firebase async results
+  
+  // Exit if no result available
+  if (!aResult.isResult())
+    return;
+
+  if (aResult.isEvent()) {
+    Serial.print("Event task: ");
+    Serial.print(aResult.uid().c_str());
+    Serial.print(", msg: ");
+    Serial.print(aResult.eventLog().message().c_str());
+    Serial.print(", code: ");
+    Serial.println(aResult.eventLog().code());
   }
-  Serial.println();
-  
-  if (connected) {
-    Serial.println("Connected to server");
-    
-    // Send HTTP POST request with all required headers
-    client.print("POST ");
-    client.print(path);
-    client.println(" HTTP/1.1");
-    client.print("Host: ");
-    client.println(serverAddress);
-    client.println("Connection: close");
-    client.println("Content-Type: application/json");
-    client.println("Accept: application/json");
-    client.println("User-Agent: ArduinoUnoR4/1.0");
-    client.print("Content-Length: ");
-    client.println(jsonString.length());
-    client.println();
-    client.println(jsonString);
-    
-    // Wait for server response with timeout
-    Serial.println("Waiting for response...");
-    unsigned long responseStart = millis();
-    bool responseReceived = false;
-    String statusLine = "";
-    bool statusReceived = false;
-    
-    // Read response with timeout - only look for the status line
-    while (client.connected() && millis() - responseStart < 10000) {
-      if (client.available()) {
-        responseReceived = true;
-        char c = client.read();
-        
-        // Collect the first line only (status line)
-        if (!statusReceived) {
-          statusLine += c;
-          
-          // Check for end of status line
-          if (statusLine.endsWith("\r\n")) {
-            statusReceived = true;
-            Serial.print("Response status: ");
-            Serial.println(statusLine);
-            
-            // Check for successful status code
-            if (statusLine.indexOf("HTTP/1.1 200") >= 0 || 
-                statusLine.indexOf("HTTP/1.0 200") >= 0) {
-              Serial.println("Data uploaded successfully (200 OK)");
-            } else {
-              Serial.println("Request failed with status: " + statusLine);
-            }
-            
-            // Skip the rest of the response
-            while (client.available()) {
-              client.read();
-            }
-            break;
-          }
-        }
-      }
-    }
-    
-    if (!responseReceived) {
-      Serial.println("No response received from server (timeout)");
-    }
-    
-    client.stop();
-    Serial.println("\nConnection closed");
-  } else {
-    Serial.println("Failed to connect to server");
+
+  if (aResult.isDebug()) {
+    Serial.print("Debug task: ");
+    Serial.print(aResult.uid().c_str());
+    Serial.print(", msg: ");
+    Serial.println(aResult.debug().c_str());
+  }
+
+  if (aResult.isError()) {
+    Serial.print("Error task: ");
+    Serial.print(aResult.uid().c_str());
+    Serial.print(", msg: ");
+    Serial.print(aResult.error().message().c_str());
+    Serial.print(", code: ");
+    Serial.println(aResult.error().code());
+  }
+
+  if (aResult.available()) {
+    Serial.print("Task: ");
+    Serial.print(aResult.uid().c_str());
   }
 }
