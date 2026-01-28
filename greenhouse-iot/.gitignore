@@ -3,5 +3,6 @@
 .vscode/c_cpp_properties.json
 .vscode/launch.json
 .vscode/ipch
-firebase_secret.h
+secrets.h
 rules.txt
+CLAUDE.md
