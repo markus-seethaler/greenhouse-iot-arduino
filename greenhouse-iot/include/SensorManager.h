@@ -10,17 +10,20 @@ private:
   int soilPin;
   int soilAirValue;
   int soilWaterValue;
-  
+  int maxRetries;
+  unsigned long retryDelayMs;
+
   // Latest sensor readings
   float humidity;
   float temperature;
   int soilMoisture;
-  
+
   // Read soil moisture and map to percentage
   void readSoilMoisture();
 
 public:
-  SensorManager(int dhtPin, int soilMoisturePin, int airValue, int waterValue);
+  SensorManager(int dhtPin, int soilMoisturePin, int airValue, int waterValue,
+                int retries = 3, unsigned long retryDelay = 500);
   
   // Initialize sensors
   void begin();
