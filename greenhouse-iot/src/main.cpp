@@ -10,7 +10,7 @@ const int SOIL_AIR_VALUE = 478;
 const int SOIL_WATER_VALUE = 206;
 
 // Timing constants
-const long READ_INTERVAL = 10000;
+const long READ_INTERVAL = 30000;
 
 // Global instances
 SensorManager sensorManager(DHT_PIN, SOIL_PIN, SOIL_AIR_VALUE, SOIL_WATER_VALUE);
