@@ -4,6 +4,7 @@
 #include <Arduino.h>
 #include <WiFiS3.h>
 #include <PubSubClient.h>
+#include "SensorManager.h"
 
 class NetworkManager {
 private:
@@ -32,8 +33,8 @@ public:
   // Ensure MQTT stays connected (call in loop)
   void loop();
 
-  // Publish sensor data as JSON
-  bool publishSensorData(float temperature, float humidity, int soilMoisture);
+  // Publish sensor data as JSON (dynamic based on sensors)
+  bool publishSensorData(SensorManager& sensors);
 
   // Check connection status
   bool isConnected() const;

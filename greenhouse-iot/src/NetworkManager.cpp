@@ -44,15 +44,38 @@ void NetworkManager::loop() {
   mqttClient.loop();
 }
 
-bool NetworkManager::publishSensorData(float temperature, float humidity, int soilMoisture) {
+bool NetworkManager::publishSensorData(SensorManager& sensors) {
   if (!mqttClient.connected()) {
     return false;
   }
 
-  char payload[128];
-  snprintf(payload, sizeof(payload),
-           "{\"temperature\":%.1f,\"humidity\":%.1f,\"soil_moisture\":%d}",
-           temperature, humidity, soilMoisture);
+  char payload[256];
+  int pos = 0;
+  pos += snprintf(payload + pos, sizeof(payload) - pos, "{");
+
+  bool hasData = false;
+
+  // Add DHT data if enabled and read succeeded
+  if (sensors.isDhtEnabled() && sensors.isDhtReadSuccess()) {
+    pos += snprintf(payload + pos, sizeof(payload) - pos,
+                    "\"temperature\":%.1f,\"humidity\":%.1f",
+                    sensors.getTemperature(), sensors.getHumidity());
+    hasData = true;
+  }
+
+  // Add soil moisture sensors
+  for (int i = 0; i < sensors.getSoilSensorCount(); i++) {
+    if (sensors.isSoilReadSuccess(i)) {
+      pos += snprintf(payload + pos, sizeof(payload) - pos,
+                      "%s\"%s\":%d",
+                      hasData ? "," : "",
+                      sensors.getSoilName(i),
+                      sensors.getSoilMoisture(i));
+      hasData = true;
+    }
+  }
+
+  pos += snprintf(payload + pos, sizeof(payload) - pos, "}");
 
   bool success = mqttClient.publish(mqttTopic.c_str(), payload);
   if (success) {
