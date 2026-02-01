@@ -1,0 +1,26 @@
+# Greenhouse IoT Sensor Registry
+# This file defines all devices and their sensors.
+# Run `python scripts/generate-dashboards.py` after changes.
+
+devices:
+  arduino-1:
+    location: windowsill
+    description: "Growbox on windowsill (migrated from original setup)"
+    sensors:
+      soil_moisture: { name: "Soil Moisture", type: "soil_moisture" }
+      temperature: { name: "Temperature", type: "temperature" }
+      humidity: { name: "Humidity", type: "humidity" }
+
+  # Example for future balcony setup:
+  # esp32-01:
+  #   location: balcony
+  #   description: "Balcony plant monitoring"
+  #   sensors:
+  #     soil_1: { name: "Tomato", type: "soil_moisture" }
+  #     soil_2: { name: "Basil", type: "soil_moisture" }
+  #     soil_3: { name: "Pepper", type: "soil_moisture" }
+  #     soil_4: { name: "Strawberry", type: "soil_moisture" }
+  #     soil_5: { name: "Herbs", type: "soil_moisture" }
+  #     soil_6: { name: "Lettuce", type: "soil_moisture" }
+  #     temperature: { name: "Ambient", type: "temperature" }
+  #     humidity: { name: "Ambient", type: "humidity" }
