@@ -22,7 +22,8 @@ private:
 
 public:
   NetworkManager(const char* wifiSsid, const char* wifiPassword,
-                 const char* mqttHost, int mqttPortNum, const char* devId);
+                 const char* mqttHost, int mqttPortNum,
+                 const char* location, const char* devId);
 
   // Connect to WiFi network
   void connect();

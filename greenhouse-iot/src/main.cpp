@@ -10,7 +10,7 @@ SensorManager sensorManager(
   SOIL_SENSOR_COUNT, SOIL_PINS, SOIL_NAMES,
   SOIL_AIR_VALUES, SOIL_WATER_VALUES
 );
-NetworkManager networkManager(WIFI_SSID, WIFI_PASSWORD, MQTT_SERVER, MQTT_PORT, DEVICE_ID);
+NetworkManager networkManager(WIFI_SSID, WIFI_PASSWORD, MQTT_SERVER, MQTT_PORT, DEVICE_LOCATION, DEVICE_ID);
 
 // Timing variables
 unsigned long lastReadTime = 0;

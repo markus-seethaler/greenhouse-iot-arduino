@@ -6,7 +6,7 @@
 #define DEVICE_LOCATION "windowsill"
 
 // Timing
-#define READ_INTERVAL_MS 30000
+#define READ_INTERVAL_MS 60000
 
 // DHT22 Configuration
 #define DHT_ENABLED true

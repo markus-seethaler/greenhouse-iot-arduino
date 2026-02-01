@@ -1,11 +1,12 @@
 #include "NetworkManager.h"
 
 NetworkManager::NetworkManager(const char* wifiSsid, const char* wifiPassword,
-                               const char* mqttHost, int mqttPortNum, const char* devId)
+                               const char* mqttHost, int mqttPortNum,
+                               const char* location, const char* devId)
   : ssid(wifiSsid), password(wifiPassword),
     mqttServer(mqttHost), mqttPort(mqttPortNum), deviceId(devId),
     mqttClient(wifiClient) {
-  mqttTopic = String("greenhouse/") + deviceId;
+  mqttTopic = String("greenhouse/") + location + "/" + devId;
 }
 
 void NetworkManager::connect() {
